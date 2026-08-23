@@ -1,0 +1,16 @@
+{
+  "name": "rp-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env index.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jose": "^5.9.6",
+    "redis": "^4.7.0"
+  }
+}

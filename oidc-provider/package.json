@@ -1,0 +1,17 @@
+{
+  "name": "oidc-provider",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev -p 4000",
+    "build": "next build",
+    "start": "next start -p 4000"
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "next": "14.2.35",
+    "redis": "^4.7.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

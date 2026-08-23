@@ -37,7 +37,7 @@ export default async function TermsPage({ params, searchParams }) {
           step lives in the flow, separate from the OAuth scope-consent screen
           that comes next. No data leaves your machine &mdash; every token
           issued here is minted by the demo OIDC provider running on your own
-          computer, backed by a local Keycloak instance.
+          computer, backed by its own Redis-based user store.
         </div>
 
         <form method="POST" action={`/api/interaction/${params.uid}/terms`}>

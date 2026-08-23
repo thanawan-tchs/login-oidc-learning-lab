@@ -1,7 +1,7 @@
-# OIDC login demo — hand-rolled OP + Keycloak + React/BFF
+# OIDC login demo — hand-rolled OP (mobile + OTP) + React/BFF
 
-A four-service demo built to make the OIDC handshake fully observable: every
-request/response, every hop, and which system produced it.
+A three-service demo built to make the OIDC handshake fully observable:
+every request/response, every hop, and which system produced it.
 
 ```
 Browser ──① GET /login──────────────▶ RP-backend :4001  ("the app" — BFF)
@@ -17,10 +17,9 @@ Browser ──⑥ POST phone───────────────▶ OP
 Browser ◀─⑦ 302 /interaction/:uid/verify-otp  OP
 Browser ──⑧ GET verify-otp───────────▶ OP  (OUR OWN page: code input)
 Browser ──⑨ POST code────────────────▶ OP
-                                        OP checks the code, then calls
-                                        Keycloak's ADMIN API :8081
-                                        ("the identity service") to
-                                        find-or-create the user by phone
+                                        OP checks the code, then finds or
+                                        creates the account by phone number
+                                        in its OWN Redis user store
 Browser ◀─⑩ 302 /interaction/:uid/terms─  OP
 Browser ──⑪ terms → consent → congrats, all under the SAME :uid──▶ OP
 Browser ──⑫ "continue" on congrats───▶ OP  (interaction finish)
@@ -35,34 +34,25 @@ React ────⑰ GET /me (cookie)─────────▶ RP-backend 
 React ────⑱ Logout button────────────▶ RP-backend /logout → OP /logout
 ```
 
-Two separate "clients" exist at two separate layers:
-
-- **Keycloak client** `demo-op-admin` — confidential, service account only
-  (`serviceAccountsEnabled: true`, no browser-facing flow at all). Keycloak
-  never runs an OIDC login for end users in this setup — the OP verifies the
-  OTP itself and only reaches Keycloak over its **Admin REST API**, as a
-  service account with `manage-users`/`view-users` roles, to find-or-create
-  the account by phone number.
-- **OP client** `demo-rp` — registered in the OP's own client table
-  (`oidc-provider/lib/config.js`). Only the RP-backend talks to it.
+There's only one "client" registration in this whole system now: `demo-rp`,
+in the OP's own client table (`oidc-provider/lib/config.js`) — "who is
+allowed to ask the OP for tokens." The OP is fully self-contained: it
+authenticates users itself (mobile + OTP) and stores their accounts itself
+(Redis) — there's no third identity service anymore. (An earlier iteration
+of this project used Keycloak, first via ROPC, then via real OIDC
+federation, then purely as a user directory over its Admin API — see git
+history/prior conversation if you want to see what that looked like. Once
+the OP became the actual authenticator *and* had nowhere left to delegate
+identity storage to, Keycloak stopped earning its keep and was removed.)
 
 ## Run it
 
-**1. Identity service + Redis (Docker)**
+**1. Redis (Docker)**
 
 ```bash
 cd docker
 docker compose up -d
-```
-
-Brings up Keycloak at `http://localhost:8081` (realm `demo` imported: the
-`demo-op-admin` service-account client — no seeded end-user, accounts are
-created on demand by phone number) and Redis at `localhost:6379`. Sanity
-check:
-
-```bash
-curl http://localhost:8081/realms/demo/.well-known/openid-configuration
-docker exec docker-redis-1 redis-cli ping
+docker exec docker-redis-1 redis-cli ping   # sanity check
 ```
 
 **2. OIDC provider ("the oidc")**
@@ -94,9 +84,8 @@ npm run dev     # http://localhost:5173
 Open `http://localhost:5173`, click **Log in**, enter any phone number like
 `+15551234567`, then read the OTP off the `oidc-provider` terminal (or the
 dev banner shown right on the page — gated off when `NODE_ENV=production`).
-Watch all three terminals — every request in and out is logged with a
-`[tag]` prefix (`[OP]`, `[OP -> Keycloak]`, `[RP-backend]`,
-`[RP-backend -> OP]`).
+Watch both server terminals — every request in and out is logged with a
+`[tag]` prefix (`[OP]`, `[RP-backend]`, `[RP-backend -> OP]`).
 
 ## Where each journey step lives
 
@@ -105,7 +94,7 @@ Watch all three terminals — every request in and out is logged with a
 | Open login page | `frontend` Home → full-page nav to `rp-backend` `GET /login` |
 | `create interaction/:uid` | `oidc-provider` `GET /authorize` → Redis `interaction:*` key |
 | Enter mobile number (our UI) | `oidc-provider` `GET /interaction/:uid/login` |
-| Send + verify OTP | `POST /api/interaction/:uid/login` generates it (mock "SMS", logged); `POST /api/interaction/:uid/verify-otp` checks it, then calls `findOrCreateUserByPhone` (Keycloak Admin API) |
+| Send + verify OTP | `POST /api/interaction/:uid/login` generates it (mock "SMS", logged); `POST /api/interaction/:uid/verify-otp` checks it, then calls `findOrCreateUserByPhone` (`lib/users.js`, Redis) |
 | Term consent | `oidc-provider` `/interaction/:uid/terms` |
 | Consent mockup A (scopes) | `oidc-provider` `/interaction/:uid/consent` |
 | Congrats page | `oidc-provider` `/interaction/:uid/congrats` |
@@ -128,46 +117,32 @@ Watch all three terminals — every request in and out is logged with a
   banner entirely rather than just gating it.
 - **Resend** is rate-limited to one per 30 seconds
   (`oidc-provider/lib/rateLimit.js`, reused from the `/token` limiter).
-- **Identity**: the phone number *is* the Keycloak username — no custom user
-  attribute needed, which sidesteps Keycloak's declarative User Profile
-  restrictions on arbitrary attributes. `lib/keycloakAdmin.js` looks the user
-  up by exact username match, creates one if none exists, and returns its
-  Keycloak `id` as `sub` — the same shape every login mechanism this project
-  has used has produced, so nothing downstream changed.
+- **Identity**: `oidc-provider/lib/users.js` is the OP's own user directory —
+  a Redis key per phone number (`user:<phone>`, no TTL, unlike everything
+  else this project stores in Redis), holding a generated UUID that becomes
+  the token `sub`. Looking up the same phone number twice returns the same
+  account. Same shape (`{ accountId, profile }`) every login mechanism this
+  project has used has produced, so nothing downstream ever had to change.
 
 ## Production hardening
 
 What changed from the original learning-demo cut, and why:
 
-- **Real credential verification, not ROPC — and Keycloak never runs an
-  OIDC login at all anymore.** The OP verifies the OTP itself and reaches
-  Keycloak only over its Admin API as a service account. This is a
-  deliberate step *away* from federating to Keycloak's own hosted login
-  (an earlier iteration of this hardening pass) because the login UI needed
-  to be fully custom (mobile + OTP) rather than anything Keycloak can render
-  itself.
-- **Keycloak's own brute-force protection** (`bruteForceProtected: true` in
-  the realm) still protects its admin console; the OTP endpoints have their
-  own attempt/resend limits (above), since Keycloak isn't in a position to
-  protect a credential step it never sees.
+- **Real credential verification, not ROPC.** The OP verifies the OTP
+  itself rather than forwarding a password to a third party.
 - **Redis-backed persistence.** Every store that used to be an in-memory
   `Map` (`oidc-provider/lib/stores.js`: interactions, codes, sessions,
-  access/refresh tokens; `rp-backend/lib/sessionStore.js`: pending logins,
-  sessions) is now Redis with per-record TTLs. Verified by restarting both
-  Node services mid-session and confirming `/me` still resolves.
+  access/refresh tokens, now also `lib/users.js`'s accounts;
+  `rp-backend/lib/sessionStore.js`: pending logins, sessions) is Redis, with
+  per-record TTLs (except user accounts, which are permanent). Verified by
+  restarting both Node services mid-session and confirming `/me` still
+  resolves.
 - **Secrets via env vars**, not literals. `oidc-provider/.env.local` and
   `rp-backend/.env` (both gitignored; `.env.example` files committed)
-  supply `KEYCLOAK_ADMIN_CLIENT_SECRET`, `DEMO_RP_CLIENT_SECRET`,
-  `CLIENT_SECRET`. The one exception: `docker/keycloak/realm-export.json`'s
-  client secret is still a literal — Keycloak's plain-JSON realm import
-  doesn't do `${env.*}` substitution (only its separate Vault SPI does,
-  disproportionate effort for a local bootstrap file). A real deployment
-  wouldn't bootstrap Keycloak from a committed JSON file at all — it'd
-  provision the realm via the Admin API/Terraform with secrets from a real
-  secrets manager.
-- **Rate limiting** on `POST /token`, `GET /userinfo`, and OTP
-  send/resend/verify (Redis fixed-window counter,
-  `oidc-provider/lib/rateLimit.js`).
+  supply `DEMO_RP_CLIENT_SECRET` and `CLIENT_SECRET`.
+- **Rate limiting** on `POST /token`, `GET /userinfo`, and OTP resend
+  (Redis fixed-window counter, `oidc-provider/lib/rateLimit.js`), plus a
+  hard per-interaction cap on wrong-OTP attempts.
 - **Token revocation** — `POST /revoke` (RFC 7009) on the OP, plus a
   `revocation_endpoint` in the discovery document.
 - **Cookies** (`op_session`, `rp_session`) now set `secure` when
@@ -179,8 +154,13 @@ What changed from the original learning-demo cut, and why:
   "Login mechanics" above for exactly what to swap in.
 - **TLS termination.** Everything here runs on plain HTTP on `localhost`.
   A real deployment puts a reverse proxy (Caddy, nginx, a cloud load
-  balancer) in front of all three Node services with real certificates —
-  there's no meaningful way to demo that on localhost, and the `secure`
-  cookie flag above is what actually depends on it being there.
+  balancer) in front of both Node services with real certificates — there's
+  no meaningful way to demo that on localhost, and the `secure` cookie flag
+  above is what actually depends on it being there.
 - **A real secrets manager** (Vault, AWS/GCP Secrets Manager, etc.) in place
   of `.env` files, for anything beyond a single developer's machine.
+- **A real user directory**, if you outgrow "one Redis key per phone
+  number" — the point where you'd reach for something like Keycloak (or a
+  proper database) again is when you need more than lookup-by-phone: admin
+  tooling, audit trails, roles/groups, or federation with other identity
+  providers.

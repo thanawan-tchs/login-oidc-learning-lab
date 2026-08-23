@@ -44,9 +44,8 @@ export default async function LoginPage({ params, searchParams }) {
         </form>
 
         <p className="hint">
-          This is our own UI — Keycloak is only reached over its Admin API to
-          look up or create your account by phone number, never for the login
-          screen itself.
+          This is our own UI end to end — the OP verifies the code itself and
+          looks up or creates your account by phone number in its own store.
         </p>
       </div>
     </main>

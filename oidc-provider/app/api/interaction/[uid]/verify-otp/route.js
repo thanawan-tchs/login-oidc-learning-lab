@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { interactions } from '../../../../../lib/stores';
-import { findOrCreateUserByPhone } from '../../../../../lib/keycloakAdmin';
+import { findOrCreateUserByPhone } from '../../../../../lib/users';
 import { log } from '../../../../../lib/log';
 
 const MAX_ATTEMPTS = 5;

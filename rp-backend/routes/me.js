@@ -1,14 +1,15 @@
 import { Router } from 'express';
 import { sessions } from '../lib/sessionStore.js';
+import { getSessionId } from '../lib/getSessionId.js';
 import { log } from '../lib/log.js';
 
 const router = Router();
 
-// The only endpoint the React app calls directly. It never sees the token
-// exchange itself — it just asks "what does my session say?" and we answer
-// from the RP's own session store (Redis).
+// The endpoint both the web frontend and the mobile app call directly.
+// Neither ever sees the token exchange itself — they just ask "what does my
+// session say?" and we answer from the RP's own session store (Redis).
 router.get('/me', async (req, res) => {
-  const sid = req.cookies.rp_session;
+  const sid = getSessionId(req);
   const session = sid && (await sessions.get(sid));
 
   log('RP-backend', 'GET /me', { hasSession: Boolean(session) });

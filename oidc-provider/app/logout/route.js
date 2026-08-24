@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sessions } from '../../lib/stores';
+import { absoluteUrl } from '../../lib/absoluteUrl';
 import { log } from '../../lib/log';
 
 // end_session_endpoint. Kills the OP's own SSO session — separate from, and
@@ -17,7 +18,7 @@ export async function GET(request) {
     log('OP', 'GET /logout: no OP session cookie present');
   }
 
-  const res = NextResponse.redirect(postLogoutRedirectUri || new URL('/', request.url), 303);
+  const res = NextResponse.redirect(postLogoutRedirectUri || absoluteUrl('/'), 303);
   res.cookies.delete('op_session');
   return res;
 }

@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "OTP Login Demo",
+    "slug": "otp-login-demo",
+    "scheme": "otpdemo",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {},
+    "plugins": ["expo-secure-store"]
+  }
+}

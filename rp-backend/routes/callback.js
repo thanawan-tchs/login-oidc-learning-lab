@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
-import { pendingLogins, sessions } from '../lib/sessionStore.js';
+import { pendingLogins, sessions, mobileHandoffs } from '../lib/sessionStore.js';
 import { randomToken } from '../lib/pkce.js';
 import { OP_ISSUER, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, FRONTEND_ORIGIN } from '../lib/config.js';
 import { log } from '../lib/log.js';
@@ -25,7 +25,7 @@ router.get('/callback', async (req, res) => {
   }
   await pendingLogins.delete(state);
 
-  log('RP-backend', 'received code from OP, exchanging at /token', { state });
+  log('RP-backend', 'received code from OP, exchanging at /token', { state, client: pending.client });
 
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -71,7 +71,21 @@ router.get('/callback', async (req, res) => {
     createdAt: Date.now(),
   });
 
-  log('RP-backend', `RP session ${sid} created`, { sub: claims.sub });
+  log('RP-backend', `RP session ${sid} created`, { sub: claims.sub, client: pending.client });
+
+  if (pending.client === 'mobile') {
+    // No cookie — this in-app-browser instance is about to close and hand
+    // control back to native code, which can't read it anyway. Instead,
+    // a one-time code rides the deep-link redirect; the app exchanges it
+    // for the real session token at GET /mobile/session.
+    const handoff = randomToken(16);
+    await mobileHandoffs.set(handoff, sid);
+    log('RP-backend', `mobile handoff ${handoff} issued, redirecting to app`, { redirectUri: pending.mobileRedirectUri });
+
+    const appRedirectUrl = new URL(pending.mobileRedirectUri);
+    appRedirectUrl.searchParams.set('handoff', handoff);
+    return res.redirect(appRedirectUrl.toString());
+  }
 
   res.cookie('rp_session', sid, {
     httpOnly: true,

@@ -1,7 +1,10 @@
 # OIDC login demo — hand-rolled OP (mobile + OTP) + React/BFF
 
-A three-service demo built to make the OIDC handshake fully observable:
-every request/response, every hop, and which system produced it.
+A demo built to make the OIDC handshake fully observable: every
+request/response, every hop, and which system produced it. Two frontends
+(`frontend/`, a web SPA, and `mobile-app/`, an Expo app) share the exact
+same `rp-backend` and `oidc-provider` — same login journey, two different
+ways of holding the resulting session.
 
 ```
 Browser ──① GET /login──────────────▶ RP-backend :4001  ("the app" — BFF)
@@ -87,6 +90,41 @@ dev banner shown right on the page — gated off when `NODE_ENV=production`).
 Watch both server terminals — every request in and out is logged with a
 `[tag]` prefix (`[OP]`, `[RP-backend]`, `[RP-backend -> OP]`).
 
+**5. Mobile app (Expo) — optional, alongside or instead of the web frontend**
+
+```bash
+cd mobile-app
+npm install
+npm run start
+```
+
+Scan the QR code with Expo Go (or press `i`/`a` for a simulator). Before
+that works, edit `mobile-app/lib/config.js` — `localhost` only resolves
+correctly from an iOS simulator; a physical phone on the same Wi-Fi needs
+your dev machine's LAN IP, the Android emulator needs the special alias
+`10.0.2.2`. Same "Log in" journey, same `rp-backend` — see "The mobile app"
+below for how it holds its session differently than the web frontend does.
+
+Pinned to **Expo SDK 54**, not the newest published SDK — the Expo Go app
+on the App Store lags a new SDK release by some weeks (at the time of
+writing it's several versions behind), and targeting the bleeding-edge SDK
+gets you exactly the `Project is incompatible with this version of Expo Go`
+error. If that error ever comes back, it means Expo Go has moved on again:
+check what SDK your installed Expo Go actually reports and run:
+
+```bash
+npx expo install expo@<that SDK version> --fix
+npm dedupe
+```
+
+Then check `app.json`'s `plugins` array — `expo install` sometimes adds an
+entry for a package that doesn't actually ship a valid config plugin at the
+SDK you land on (this project hit that with `expo-status-bar` going from
+SDK 56→54: `PluginError: Unable to resolve a valid config plugin`). If
+`npx expo start` throws a `PluginError`, drop the offending package from
+`plugins` — most Expo packages don't need one for basic Expo Go usage;
+`expo-secure-store` is the one in this project that genuinely does.
+
 ## Where each journey step lives
 
 | Journey step | Where |
@@ -100,9 +138,45 @@ Watch both server terminals — every request in and out is logged with a
 | Congrats page | `oidc-provider` `/interaction/:uid/congrats` |
 | Got auth code | `POST /api/interaction/:uid/finish` mints the code, opens the **OP session**, deletes the interaction |
 | Exchange code → token | `rp-backend` `GET /callback` → `POST` to OP `/token` (PKCE `code_verifier` checked, rate-limited) |
-| Get session | `rp-backend` sets its own `rp_session` cookie (separate from the OP's session), stored in Redis |
-| Display token as final page | `frontend` `/result` reads `GET /me` on `rp-backend` |
-| Logout button | `frontend` → `rp-backend` `POST /logout` (clears RP session) → browser navigates to OP `/logout` (clears OP session) |
+| Get session | **Web**: `rp-backend` sets an `rp_session` cookie. **Mobile**: `rp-backend` redirects the in-app browser to a deep link with a one-time `?handoff=` code instead (see "The mobile app" below) |
+| Display token as final page | **Web**: `frontend` `/result` reads `GET /me` on `rp-backend` (cookie). **Mobile**: `mobile-app`'s Result screen reads the same `GET /me` (bearer token) |
+| Logout button | **Web**: clears the RP cookie. **Mobile**: clears the stored bearer token. Both then open the OP's `/logout` to clear the OP session too |
+
+## The mobile app (`mobile-app/`, Expo)
+
+Same login journey, same `oidc-provider` pages, same `rp-backend` — the only
+thing that's actually different is how the app ends up holding its session,
+because a native app can't rely on a browser's cookie jar the way a web SPA
+can.
+
+- **`GET /login?client=mobile&redirect_uri=<...>`** — the app computes its
+  own redirect URI at runtime via `expo-auth-session`'s `makeRedirectUri()`
+  (a proxied `exp://`/`auth.expo.io` URL in Expo Go, a real `otpdemo://`
+  custom-scheme URL in a standalone/dev-client build) and passes it in.
+  `rp-backend` can't hardcode this — it stores whatever the app sent on the
+  `pendingLogins` entry (`lib/sessionStore.js`) and uses it later.
+- The app opens that URL with `expo-web-browser`'s `openAuthSessionAsync` —
+  an in-app browser that renders the exact same `oidc-provider` pages
+  (phone number → OTP → terms → consent → congrats) the web frontend uses.
+  Nothing in `oidc-provider` knows or cares which client it's talking to.
+- **`GET /callback`** (`rp-backend/routes/callback.js`) does the same
+  code-for-tokens exchange either way, but branches at the very end on
+  `pending.client`: web gets the existing cookie + redirect; mobile gets
+  **no cookie** — instead a one-time handoff code
+  (`lib/sessionStore.js`'s `mobileHandoffs`, 60s TTL) and a redirect to the
+  app's own `redirect_uri` with `?handoff=<code>`. `openAuthSessionAsync`
+  recognizes that URL and hands control back to the app with it.
+- **`GET /mobile/session?handoff=<code>`** (new route,
+  `rp-backend/routes/mobileSession.js`) — the app calls this once, trading
+  the handoff code for `{ sessionToken, claims, accessToken, ... }`.
+  `sessionToken` is just the same `sid` a web session uses; there's no
+  separate token format. The app stores it with `expo-secure-store`
+  (`mobile-app/lib/session.js`) and sends it as `Authorization: Bearer
+  <sessionToken>` on every later call.
+- **`GET /me` and `POST /logout`** now accept a session id from *either*
+  place — `rp-backend/lib/getSessionId.js` checks the `Authorization`
+  header first, falls back to the `rp_session` cookie. Same two routes,
+  same session store, two ways in.
 
 ## Login mechanics (mobile + OTP)
 

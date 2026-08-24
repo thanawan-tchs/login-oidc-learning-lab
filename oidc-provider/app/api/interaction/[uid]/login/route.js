@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { randomInt } from 'crypto';
 import { interactions } from '../../../../../lib/stores';
+import { absoluteUrl } from '../../../../../lib/absoluteUrl';
 import { log } from '../../../../../lib/log';
 
 const PHONE_RE = /^\+?[1-9]\d{7,14}$/;
@@ -15,7 +16,7 @@ export async function POST(request, { params }) {
   const phone = (form.get('phone') || '').trim();
 
   if (!PHONE_RE.test(phone)) {
-    return NextResponse.redirect(new URL(`/interaction/${uid}/login?error=invalid_phone`, request.url), 303);
+    return NextResponse.redirect(absoluteUrl(`/interaction/${uid}/login?error=invalid_phone`), 303);
   }
 
   const code = randomInt(100000, 1000000).toString();
@@ -25,5 +26,5 @@ export async function POST(request, { params }) {
   // Mocked delivery — a real deployment calls an SMS provider here instead.
   log('OP', `interaction ${uid}: OTP for ${phone} is ${code} (mock SMS — logged, not sent)`);
 
-  return NextResponse.redirect(new URL(`/interaction/${uid}/verify-otp`, request.url), 303);
+  return NextResponse.redirect(absoluteUrl(`/interaction/${uid}/verify-otp`), 303);
 }

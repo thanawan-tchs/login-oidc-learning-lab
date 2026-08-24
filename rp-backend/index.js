@@ -5,6 +5,7 @@ import { FRONTEND_ORIGIN, PORT } from './lib/config.js';
 import { log } from './lib/log.js';
 import loginRouter from './routes/login.js';
 import callbackRouter from './routes/callback.js';
+import mobileSessionRouter from './routes/mobileSession.js';
 import meRouter from './routes/me.js';
 import logoutRouter from './routes/logout.js';
 
@@ -19,6 +20,7 @@ app.use((req, _res, next) => {
 
 app.use(loginRouter);
 app.use(callbackRouter);
+app.use(mobileSessionRouter);
 app.use(meRouter);
 app.use(logoutRouter);
 
